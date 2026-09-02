@@ -1,6 +1,6 @@
 #include "bee_vision.hpp"
 #include <cstdint>
-#include "esp_camera.h"
+#include <vector>
 #include "esp_camera.h"
 
 /** 
@@ -16,13 +16,14 @@ THE PLAN
 
 this requires PIXFORMAT_RGB565
 */ 
+namespace bee_vision {
 
-classify_frame(const camera_fb_t* frame){
+std::vector<uint8_t> classify_frame(const camera_fb_t* frame){
     std::vector<uint8_t> results = {};
 
     std::vector<CropView> candidates = candidate_crops(frame);
 
-    if(candidates.size == 0) {
+    if(candidates.size() == 0) {
         return results;
     }
 
@@ -45,25 +46,26 @@ bee_activity_index(std::vector<uint8_t> classification_results) {
 }
 
 CropView make_crop(const camera_fb_t* frame, uint16_t x,  uint16_t y, uint16_t n){
-    //TODO: add black pixels at frame edges, as that is in the training data too
-
     //determine stride from color type
     uint16_t stride;
     uint8_t bytes_per_px;
     switch (frame->format) {
-        case PIXFORMAT_RGB888:      bytes_per_px = 3;
-        case PIXFORMAT_RGB565:      bytes_per_px = 2;
-        case PIXFORMAT_GRAYSCALE:   bytes_per_px = 1;
-        default:                    bytes_per_px = 0;
+        case PIXFORMAT_RGB888:      bytes_per_px = 3; break;
+        case PIXFORMAT_RGB565:      bytes_per_px = 2; break;
+        case PIXFORMAT_GRAYSCALE:   bytes_per_px = 1; break;
+        default:                    bytes_per_px = 0; break;
     }
-    stride = frame->width * bytes_per_px
+    stride = frame->width * bytes_per_px;
 
-    CropView crop;
-    view.origin = frame->buf + (y * stride) + (x * bytes_per_px);
-    view.stride = stride;
-    view.size = size;
-    view.bytes_per_px = bytes_per_px;
-    return view;
+    CropView crop {
+        frame->buf + (y * stride) + (x * bytes_per_px),
+        stride,
+        n, //size
+        static_cast<uint16_t>(frame->width),
+        static_cast<uint16_t>(frame->height),
+        bytes_per_px
+    };
+    return crop;
 }
 
 candidate_crops(const camera_fb_t* frame){
@@ -77,4 +79,6 @@ candidate_crops(const camera_fb_t* frame){
     // determine saturation hotspots
 
     // create 30x30 crops around saturation hotspots and return
+}
+
 }
