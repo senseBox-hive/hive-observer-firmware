@@ -73,17 +73,18 @@ candidate_crops(const camera_fb_t* frame, uint8_t saturation_threshold){
     // This is where the operation previously implemented in python is performed
     // read image
     size_t amount_px = frame->width * frame->height;
-    uint8_t* mask = (uint8_t*) heaps_caps_malloc(amount_px, MALLOC_CAP_SPIRAM);
+    uint8_t* labelmask = (uint8_t*) heaps_caps_malloc(amount_px, MALLOC_CAP_SPIRAM);
+    UntionFind unions = UnionFind(255)
+    uint8_t current_label_id = 1;
+    // for now we just assume 255 possible labels. if more are found, assume something is wrong
 
-    if(!mask){
+    if(!labelmask){
         ESP_LOGE("CNN", "Failed to allocate mask memory");
     }
 
     // original script used blur k size 0, so the gaussian blur step is skipped for now.
     // if new training data is created that makes use of the blur step, it needs to be added here with the same params.
-
-    size_t px_above_threshold = 0; //use this to check whether most of the image appears saturated. To skip hotspot detection
-    for (int i; i<amount_px; i++) {
+    for (int i = 0; i<amount_px; i++) {
         //*unswaps your bytes*
         uint8_t first   = frame->buf[i*2 + 0];
         uint8_t second  = frame->buf[i*2 + 1];
@@ -101,18 +102,33 @@ candidate_crops(const camera_fb_t* frame, uint8_t saturation_threshold){
         // compute saturation and apply threshold
         uint8_t mx = std::max({r, g, b});
         uint8_t mn = std::min({r, g, b});
-        uint8_t sat = mx - mn;     
-        if (sat > saturation_threshold) {
-            mask[i] = 255;
-            px_above_threshold++;
-        } else {
-            mask[i] = 0;
-        }
-    }
+        uint8_t sat = mx - mn;
 
-    //check for amount of saturation
-    if ( px_above_threshold / amount_px > 0.33 ){
-        continue; //don't bother if there is too much diff. could be cam vibration or adjustment
+        // do the first pass of the 2 pass CCL algorithm
+        if (sat > saturation_threshold) {
+            // TODO: prevent out of bounds
+            bool isMostWest = (i % frame->width == 0);
+            bool isMostNorth = (i < frame->width);
+            labelmask[i] = current_label_id;
+            current_label_id++;
+            // check west pixel
+            if (!isMostWest && (labelmask[i-1] != 0)){
+                //compare north and west
+                if (!isMostNorth && (labelmask[i-frame->width] != 0)) {
+                    if (labelmask[i-1] != labelmask[i-frame->width]){
+                        unions.unite(labelmask[i-frame->width], labelmask[i-1]);
+                    }
+                }
+                labelmask[i] = labelmask[i-1];
+                current_label_id--; //no new label created after all
+            // if no west label is found check once more for north label
+            } else if(!isMostNorth && (labelmask[i-frame->width] != 0)) {
+                labelmask[i] = labelmask[i-frame->width];
+                current_label_id--; //no new label created after all
+            }
+        } else {
+            labelmask[i] = 0;
+        }
     }
 
     // determine saturation hotspots
@@ -127,7 +143,7 @@ candidate_crops(const camera_fb_t* frame, uint8_t saturation_threshold){
             uint8_t x = i % frame->width;
             uint8_t y = i / frame->width;
 
-            
+
         }
     }
 
