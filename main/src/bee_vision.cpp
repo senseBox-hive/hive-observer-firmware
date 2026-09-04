@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <vector>
 #include "esp_camera.h"
+#include "esp_heap_caps.h"
 
 /** 
 THE PLAN
@@ -68,17 +69,70 @@ CropView make_crop(const camera_fb_t* frame, uint16_t x,  uint16_t y, uint16_t n
     return crop;
 }
 
-candidate_crops(const camera_fb_t* frame){
+candidate_crops(const camera_fb_t* frame, uint8_t saturation_threshold){
     // This is where the operation previously implemented in python is performed
-
     // read image
+    size_t amount_px = frame->width * frame->height;
+    uint8_t* mask = (uint8_t*) heaps_caps_malloc(amount_px, MALLOC_CAP_SPIRAM);
 
-    // compute saturation
-    // blur saturation
+    if(!mask){
+        ESP_LOGE("CNN", "Failed to allocate mask memory");
+    }
+
+    // original script used blur k size 0, so the gaussian blur step is skipped for now.
+    // if new training data is created that makes use of the blur step, it needs to be added here with the same params.
+
+    size_t px_above_threshold = 0; //use this to check whether most of the image appears saturated. To skip hotspot detection
+    for (int i; i<amount_px; i++) {
+        //*unswaps your bytes*
+        uint8_t first   = frame->buf[i*2 + 0];
+        uint8_t second  = frame->buf[i*2 + 1];
+        uint16_t px = (second << 8) | first;
+
+        // RRRRRGGG GGGBBBBB -> GGGGGGBB BBBRRRRR & 00011111mask = 000RRRRR (what happens to the first byte?) 
+        uint8_t r = (px >> 11) & 0x1F;  
+        uint8_t g = (px >> 5)  & 0x3F;  // 6    00111111 mask
+        uint8_t b =  px        & 0x1F;  // 5    00011111 mask
+        // convert to 8bit
+        r = (r << 3) | (r >> 2); // 000rrrrr: (rrrrr000) | (00000rrr) -> rrrrrrrr
+        g = (g << 2) | (g >> 4);
+        b = (b << 3) | (b >> 2);
+
+        // compute saturation and apply threshold
+        uint8_t mx = std::max({r, g, b});
+        uint8_t mn = std::min({r, g, b});
+        uint8_t sat = mx - mn;     
+        if (sat > saturation_threshold) {
+            mask[i] = 255;
+            px_above_threshold++;
+        } else {
+            mask[i] = 0;
+        }
+    }
+
+    //check for amount of saturation
+    if ( px_above_threshold / amount_px > 0.33 ){
+        continue; //don't bother if there is too much diff. could be cam vibration or adjustment
+    }
 
     // determine saturation hotspots
+    // flood fill is how the python prototype was implemented
+    // consider using a more efficient algo at a later point
+    for (int i; i<amount_px; i++) {
+        if (mask[i] == 0xFF ) { //unvisited
+            uint8_t area = 0;
+            uint8_t sum_x = 0;
+            uint8_t sum_y = 0;
+
+            uint8_t x = i % frame->width;
+            uint8_t y = i / frame->width;
+
+            
+        }
+    }
 
     // create 30x30 crops around saturation hotspots and return
+    heap_caps_free(mask)
 }
 
 }
