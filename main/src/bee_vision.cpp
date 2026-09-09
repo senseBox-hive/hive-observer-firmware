@@ -1,8 +1,12 @@
 #include "bee_vision.hpp"
+
 #include <cstdint>
 #include <vector>
+#include <algorithm>
+
 #include "esp_camera.h"
 #include "esp_heap_caps.h"
+#include "esp_log.h"
 
 /** 
 THE PLAN
@@ -22,31 +26,37 @@ namespace bee_vision {
 std::vector<uint8_t> classify_frame(const camera_fb_t* frame){
     std::vector<uint8_t> results = {};
 
-    std::vector<CropView> candidates = candidate_crops(frame);
+    std::vector<CropView> candidates = candidate_crops(
+        frame, 
+        40, 
+        16, 
+        32, 
+        800
+    );
 
     if(candidates.size() == 0) {
         return results;
     }
 
     for (auto i = 0; i < candidates.size(); i++){
-        uint8_t class = classify_crop(candidates[i])
+        uint8_t classifieds = classify_crop(candidates[i]);
         // TODO: error when classification fails
-        results.push_back(class);
+        results.push_back(classifieds);
     }
 
     return results;
 }
 
 // This is where the CNN is used
-classify_crop(const camera_fb_t* candidate){
-    //TODO
-}
+//classify_crop(const camera_fb_t* candidate){
+//    //TODO
+//}
+//
+//bee_activity_index(std::vector<uint8_t> classification_results) {
+//    //perform maths on the resulting classes to estimate how busy the hive is
+//}
 
-bee_activity_index(std::vector<uint8_t> classification_results) {
-    //perform maths on the resulting classes to estimate how busy the hive is
-}
-
-CropView make_crop(const camera_fb_t* frame, uint16_t x,  uint16_t y, uint16_t n){
+CropView make_crop(const camera_fb_t* frame, int16_t x,  int16_t y, uint16_t n){
     //determine stride from color type
     uint16_t stride;
     uint8_t bytes_per_px;
@@ -60,6 +70,8 @@ CropView make_crop(const camera_fb_t* frame, uint16_t x,  uint16_t y, uint16_t n
 
     CropView crop {
         frame->buf + (y * stride) + (x * bytes_per_px),
+        x, //origin_x
+        y, //origin_y
         stride,
         n, //size
         static_cast<uint16_t>(frame->width),
@@ -69,17 +81,26 @@ CropView make_crop(const camera_fb_t* frame, uint16_t x,  uint16_t y, uint16_t n
     return crop;
 }
 
-candidate_crops(const camera_fb_t* frame, uint8_t saturation_threshold){
+std::vector<CropView> candidate_crops(
+    const camera_fb_t* frame, 
+    uint8_t saturation_threshold, 
+    uint8_t min_area, 
+    uint8_t cropsize,
+    uint16_t max_area
+){
     // This is where the operation previously implemented in python is performed
-    // read image
     size_t amount_px = frame->width * frame->height;
-    uint8_t* labelmask = (uint8_t*) heaps_caps_malloc(amount_px, MALLOC_CAP_SPIRAM);
-    UntionFind unions = UnionFind(255)
-    uint8_t current_label_id = 1;
+    uint16_t* labelmask = (uint16_t*) heap_caps_malloc(amount_px, MALLOC_CAP_SPIRAM);
+    UnionFind unions = UnionFind(256);
+    uint16_t current_label_id = 1;
+    std::vector<CropView> crops;
+    uint16_t MAX_LABELS = 2048;
     // for now we just assume 255 possible labels. if more are found, assume something is wrong
 
     if(!labelmask){
         ESP_LOGE("CNN", "Failed to allocate mask memory");
+        heap_caps_free(labelmask);
+        return crops;
     }
 
     // original script used blur k size 0, so the gaussian blur step is skipped for now.
@@ -111,6 +132,7 @@ candidate_crops(const camera_fb_t* frame, uint8_t saturation_threshold){
             bool isMostNorth = (i < frame->width);
             labelmask[i] = current_label_id;
             current_label_id++;
+            
             // check west pixel
             if (!isMostWest && (labelmask[i-1] != 0)){
                 //compare north and west
@@ -129,26 +151,71 @@ candidate_crops(const camera_fb_t* frame, uint8_t saturation_threshold){
         } else {
             labelmask[i] = 0;
         }
-    }
 
-    // determine saturation hotspots
-    // flood fill is how the python prototype was implemented
-    // consider using a more efficient algo at a later point
-    for (int i; i<amount_px; i++) {
-        if (mask[i] == 0xFF ) { //unvisited
-            uint8_t area = 0;
-            uint8_t sum_x = 0;
-            uint8_t sum_y = 0;
+        if (current_label_id > MAX_LABELS) {
+            ESP_LOGE("CNN", "Label ID rolled over max labels, frame considered invalid");
+            heap_caps_free(labelmask);
+            return crops;
+        }
 
-            uint8_t x = i % frame->width;
-            uint8_t y = i / frame->width;
-
-
+        // guard current_label_id rolling over to 0, which would be interpreted as background
+        if (current_label_id == 0) {
+            ESP_LOGE("CNN", "Label ID rolled over to 0, frame considered invalid");
+            heap_caps_free(labelmask);
+            return crops;
         }
     }
 
-    // create 30x30 crops around saturation hotspots and return
-    heap_caps_free(mask)
+    //uint32t is a bit wasteful. if it ends up too large for internal memory, switch to uint16_t and just check for overflow when adding to the sums.
+    uint32_t* area  = (uint32_t*) heap_caps_calloc(MAX_LABELS + 1, sizeof(uint32_t), MALLOC_CAP_INTERNAL);
+    uint32_t* sum_x = (uint32_t*) heap_caps_calloc(MAX_LABELS + 1, sizeof(uint32_t), MALLOC_CAP_INTERNAL);
+    uint32_t* sum_y = (uint32_t*) heap_caps_calloc(MAX_LABELS + 1, sizeof(uint32_t), MALLOC_CAP_INTERNAL);
+    if (!area || !sum_x || !sum_y) {
+        ESP_LOGE("CNN", "failed to allocate memory for area/sum arrays");
+        heap_caps_free(labelmask);
+        heap_caps_free(area);
+        heap_caps_free(sum_x);
+        heap_caps_free(sum_y);
+        return crops;
+     }
+
+    // pass 2
+    for(int i = 0; i<amount_px; i++){
+        if (labelmask[i] != 0){
+            //correct labels for all pixels
+            uint16_t root = unions.find(labelmask[i]);
+            labelmask[i] = root;
+            uint16_t x = i % frame->width;
+            uint16_t y = i / frame->width;
+
+            area[root]  += 1;
+            sum_x[root] += x;
+            sum_y[root] += y;
+        }
+    }
+
+    // create NxN crops for each root label
+    for(uint16_t label = 1; label<unions.size(); label++){
+        if (area[label] == 0) continue; // label is non-root
+        if (area[label] < min_area) continue; // label is too small
+        int cx = sum_x[label] / area[label];
+        int cy = sum_y[label] / area[label];
+
+        // get necessary values for make crop
+        int16_t topleft_x = cx - (cropsize/2);
+        int16_t topleft_y = cy - (cropsize/2);
+
+        // CROP THE BLOB
+        crops.push_back(
+            make_crop(frame, topleft_x, topleft_y, cropsize)
+        );
+    }
+    heap_caps_free(labelmask);
+    heap_caps_free(area);
+    heap_caps_free(sum_x);
+    heap_caps_free(sum_y);
+
+    return crops;
 }
 
 }
