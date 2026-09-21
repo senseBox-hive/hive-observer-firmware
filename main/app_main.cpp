@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <algorithm>
 #include "esp_log.h"
-#include "sd_card.hpp"
 #include <esp_system.h>
 #include <string.h>
 #include <vector>
@@ -20,6 +19,8 @@
 #include "onewire_bus.h"
 #include "temp_pins.h"
 #include "temp_sensors.hpp"
+#include "sd_card.hpp"
+#include "bee_vision.hpp"
 
 extern "C" void app_main(void)
 {
@@ -39,7 +40,15 @@ extern "C" void app_main(void)
     ESP_LOGI("MEM", "Begin Main loop...");
     while (true) {
         ESP_LOGI("MEM", "Free heap at start of loop: %lu bytes", esp_get_free_heap_size());
-        
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        ESP_LOGI("CNN", "initializing bee model...");
+        if (!bee_vision::initialize_bee_model()) {
+            ESP_LOGE("CNN", "Failed to initialize bee model");
+            continue;
+        }
+        ESP_LOGI("CNN", "Model initialized");
+        vTaskDelay(pdMS_TO_TICKS(2000));
+
         // print sensors found
         std::vector<float> v = temp_sensors::read_temperatures(device_nums);
         for (auto i : v){

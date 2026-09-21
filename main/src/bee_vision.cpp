@@ -8,6 +8,8 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 
+#include "dl_model_base.hpp"
+
 /** 
 THE PLAN
 
@@ -22,6 +24,10 @@ THE PLAN
 this requires PIXFORMAT_RGB565
 */ 
 namespace bee_vision {
+
+extern const uint8_t espdl_bee_model[] asm("_binary_model_beeactivity_espdl_start");
+dl::Model *bee_model = nullptr;
+int8_t model_input[32*32*3]; //input buffer for the model, RGB888, 32x32
 
 std::vector<uint8_t> classify_frame(const camera_fb_t* frame){
     std::vector<uint8_t> results = {};
@@ -39,24 +45,60 @@ std::vector<uint8_t> classify_frame(const camera_fb_t* frame){
     }
 
     for (auto i = 0; i < candidates.size(); i++){
-        uint8_t classifieds = classify_crop(candidates[i]);
+        uint8_t classified = classify_crop(candidates[i]);
         // TODO: error when classification fails
-        results.push_back(classifieds);
+
+        if (classified > 3) {
+            ESP_LOGE("CNN", "Failed to classify frame");
+            return results;
+        }
+
+        results.push_back(classified);
     }
 
     return results;
 }
 
 // This is where the CNN is used
-//classify_crop(const camera_fb_t* candidate){
-//    //TODO
-//}
+//uint8_t classify_crop(const CropView candidate){
+//    if (!bee_model) {
+//        ESP_LOGE("CNN", "Failed to classify crop: no model initialized");
+//        return 9;
+//    }
 //
+//    for (int row = 0; row < 32; row++) {
+//      for (int col = 0; col < 32; col++) {
+//        conversion happens here
+//      }
+//    }
+//
+//    dl::cls::result_t res = run_inference(bee_model, nullptr, model_input);
+//    return res.class_id;
+//}
+
+bool initialize_bee_model() {    
+    bee_model = new dl::Model((const char *)espdl_bee_model);
+    if (!bee_model) {
+        ESP_LOGE("CNN", "Failed to create model");
+        return false;
+    }
+    
+    esp_err_t test_result = bee_model->test();
+    if ( test_result != ESP_OK ) {
+        ESP_LOGE("CNN", "Model info check failed");
+        delete bee_model;
+        bee_model = nullptr;
+        return false;
+    }
+    return true;
+}
+
 //bee_activity_index(std::vector<uint8_t> classification_results) {
 //    //perform maths on the resulting classes to estimate how busy the hive is
 //}
 
 CropView make_crop(const camera_fb_t* frame, int16_t x,  int16_t y, uint16_t n){
+    
     //determine stride from color type
     uint16_t stride;
     uint8_t bytes_per_px;
@@ -81,6 +123,18 @@ CropView make_crop(const camera_fb_t* frame, int16_t x,  int16_t y, uint16_t n){
     return crop;
 }
 
+// helper function to convert a 16-bit RGB565 pixel to 8-bit RGB values
+// considers the byte swap that I was told exists 
+void unpack_565(uint16_t px, uint8_t& r, uint8_t& g, uint8_t& b) {
+    // RRRRRGGG GGGBBBBB -> GGGGGGBB BBBRRRRR & 00011111
+    uint8_t r5 = (px >> 11) & 0x1F;
+    uint8_t g6 = (px >> 5)  & 0x3F; // 6    00111111 mask
+    uint8_t b5 =  px        & 0x1F; // 5    00011111 mask
+    r = (r5 << 3) | (r5 >> 2); // 000rrrrr: (rrrrr000) | (00000rrr) -> rrrrrrrr
+    g = (g6 << 2) | (g6 >> 4);
+    b = (b5 << 3) | (b5 >> 2);
+}
+
 std::vector<CropView> candidate_crops(
     const camera_fb_t* frame, 
     uint8_t saturation_threshold, 
@@ -90,8 +144,8 @@ std::vector<CropView> candidate_crops(
 ){
     // This is where the operation previously implemented in python is performed
     size_t amount_px = frame->width * frame->height;
-    uint16_t* labelmask = (uint16_t*) heap_caps_malloc(amount_px, MALLOC_CAP_SPIRAM);
-    UnionFind unions = UnionFind(256);
+    uint16_t* labelmask = (uint16_t*) heap_caps_malloc(amount_px * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+    UnionFind unions = UnionFind(38400); //38400 would be absolute worst case. unlikely to happen
     uint16_t current_label_id = 1;
     std::vector<CropView> crops;
     uint16_t MAX_LABELS = 2048;
@@ -102,6 +156,10 @@ std::vector<CropView> candidate_crops(
         heap_caps_free(labelmask);
         return crops;
     }
+    // since both this preprocessing, as well as the model
+    // convert RGB565 to RGB888, consider using RGB888 framebuffers
+    // in the first place.
+    // TODO
 
     // original script used blur k size 0, so the gaussian blur step is skipped for now.
     // if new training data is created that makes use of the blur step, it needs to be added here with the same params.
@@ -111,14 +169,11 @@ std::vector<CropView> candidate_crops(
         uint8_t second  = frame->buf[i*2 + 1];
         uint16_t px = (second << 8) | first;
 
-        // RRRRRGGG GGGBBBBB -> GGGGGGBB BBBRRRRR & 00011111mask = 000RRRRR (what happens to the first byte?) 
-        uint8_t r = (px >> 11) & 0x1F;  
-        uint8_t g = (px >> 5)  & 0x3F;  // 6    00111111 mask
-        uint8_t b =  px        & 0x1F;  // 5    00011111 mask
-        // convert to 8bit
-        r = (r << 3) | (r >> 2); // 000rrrrr: (rrrrr000) | (00000rrr) -> rrrrrrrr
-        g = (g << 2) | (g >> 4);
-        b = (b << 3) | (b >> 2);
+        uint8_t r;
+        uint8_t g;
+        uint8_t b;
+
+        unpack_565(px, r, g, b);
 
         // compute saturation and apply threshold
         uint8_t mx = std::max({r, g, b});
@@ -158,12 +213,6 @@ std::vector<CropView> candidate_crops(
             return crops;
         }
 
-        // guard current_label_id rolling over to 0, which would be interpreted as background
-        if (current_label_id == 0) {
-            ESP_LOGE("CNN", "Label ID rolled over to 0, frame considered invalid");
-            heap_caps_free(labelmask);
-            return crops;
-        }
     }
 
     //uint32t is a bit wasteful. if it ends up too large for internal memory, switch to uint16_t and just check for overflow when adding to the sums.

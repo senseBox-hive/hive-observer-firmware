@@ -17,16 +17,17 @@ namespace bee_vision {
         // black pixel
         inline static const uint16_t black_565 = 0x0000;
         
-        inline const uint16_t* pixel(int16_t col, int16_t row) const {
+        inline uint16_t pixel(int16_t col, int16_t row) {
+            //guard against negative coordinates
+            const int16_t fx = origin_x + col;
+            const int16_t fy = origin_y + row;
             // out of frame-bounds? also return black pixel
-            if (origin_x + col >= frame_width || origin_y + row >= frame_height) {
-                return &black_565;
+            if (fx < 0 || fy < 0 || fx >= frame_width || fy >= frame_height) {
+                return black_565;
             }
 
-            // offset the px buffer by the given values
-            return reinterpret_cast<const uint16_t*>(
-                origin + (row * stride) + (col * bytes_per_px)
-            );
+            const uint8_t* p = origin + fy * stride + fx * bytes_per_px;
+            return (uint16_t(p[1]) << 8) | p[0];
         }
     };
 
@@ -87,8 +88,11 @@ namespace bee_vision {
 
     uint8_t classify_crop(const CropView candidate);
 
+    bool initialize_bee_model();
+
     float bee_activity_index(std::vector<uint8_t> classification_results);
 
     CropView make_crop(const camera_fb_t* frame, int16_t x,  int16_t y, uint16_t n);
 
+    void unpack_565(uint16_t px, uint8_t& r, uint8_t& g, uint8_t& b);
 }
