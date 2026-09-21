@@ -3,6 +3,10 @@
 #include <cstdint>
 #include <vector>
 #include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <limits>
+#include <map>
 
 #include "esp_camera.h"
 #include "esp_heap_caps.h"
@@ -60,24 +64,72 @@ std::vector<uint8_t> classify_frame(const camera_fb_t* frame){
 }
 
 // This is where the CNN is used
-//uint8_t classify_crop(const CropView candidate){
-//    if (!bee_model) {
-//        ESP_LOGE("CNN", "Failed to classify crop: no model initialized");
-//        return 9;
-//    }
-//
-//    for (int row = 0; row < 32; row++) {
-//      for (int col = 0; col < 32; col++) {
-//        conversion happens here
-//      }
-//    }
-//
-//    dl::cls::result_t res = run_inference(bee_model, nullptr, model_input);
-//    return res.class_id;
-//}
+uint8_t classify_crop(const CropView& candidate){
+    if (!bee_model) {
+        ESP_LOGE("CNN", "Failed to classify crop: no model initialized");
+        return 9;
+    }
+
+    ESP_LOGI("CNN", "Classifying crop at (%d, %d) with size %dx%d", candidate.origin_x, candidate.origin_y, candidate.size, candidate.size);
+    //measure time to convert to tensor and run inference
+    for (int row = 0; row < 32; row++) {
+      for (int col = 0; col < 32; col++) {
+        uint16_t px = candidate.pixel(col, row);
+        uint8_t r, g, b;
+        unpack_565(px, r, g, b);                    // byte order + bit replication
+
+        // ToTensors /255, exponent -7 -> ×2^7 = ×128, clamp
+        int qr = std::clamp((int)lroundf(r / 255.0f * 128.0f), -127, 127);
+        int qg = std::clamp((int)lroundf(g / 255.0f * 128.0f), -127, 127);
+        int qb = std::clamp((int)lroundf(b / 255.0f * 128.0f), -127, 127);
+
+        int base = (row * 32 + col) * 3;            // HWC interleaved (from .info: 1x32x32x3)
+        model_input[base + 0] = (int8_t)qr;
+        model_input[base + 1] = (int8_t)qg;
+        model_input[base + 2] = (int8_t)qb;
+      }
+    }
+    ESP_LOGI("CNN", "Converted crop to tensor");
+
+    // run inference here
+    std::map<std::string, dl::TensorBase *> &model_inputs = bee_model->get_inputs();
+    std::map<std::string, dl::TensorBase *> &model_outputs = bee_model->get_outputs();
+    dl::TensorBase *input_tensor = model_inputs.begin()->second;
+    dl::TensorBase *output_tensor = model_outputs.begin()->second;
+    std::memcpy(input_tensor->get_element_ptr<int8_t>(), model_input, sizeof(model_input));
+    //bee_model->run(dl::RUNTIME_MODE_SINGLE_CORE);
+    bee_model->run(dl::RUNTIME_MODE_MULTI_CORE); 
+        //this still takes 1.1s. quite a long time.
+        // might be becaues its running in psram
+    ESP_LOGI("CNN", "Ran inference on crop");
+
+    int class_id = 0;
+    float best_score = -std::numeric_limits<float>::infinity();
+    for (int i = 0; i < 3; ++i) {
+        float score;
+        switch (output_tensor->dtype) {
+            case dl::DATA_TYPE_INT8:
+                score = output_tensor->get_element_ptr<int8_t>()[i];
+                break;
+            default:
+                ESP_LOGE("CNN", "Unsupported output type: %s",
+                         output_tensor->get_dtype_string());
+                return 9;
+        }
+
+        if (score > best_score) {
+            best_score = score;
+            class_id = i;
+        }
+    }
+
+    return static_cast<uint8_t>(class_id);
+}
 
 bool initialize_bee_model() {    
-    bee_model = new dl::Model((const char *)espdl_bee_model);
+    bee_model = new dl::Model(
+        (const char *)espdl_bee_model
+    );
     if (!bee_model) {
         ESP_LOGE("CNN", "Failed to create model");
         return false;
@@ -90,6 +142,9 @@ bool initialize_bee_model() {
         bee_model = nullptr;
         return false;
     }
+
+    bee_model->profile(true);
+
     return true;
 }
 

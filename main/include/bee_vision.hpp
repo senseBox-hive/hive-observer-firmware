@@ -17,7 +17,7 @@ namespace bee_vision {
         // black pixel
         inline static const uint16_t black_565 = 0x0000;
         
-        inline uint16_t pixel(int16_t col, int16_t row) {
+        inline uint16_t pixel(int16_t col, int16_t row) const {
             //guard against negative coordinates
             const int16_t fx = origin_x + col;
             const int16_t fy = origin_y + row;
@@ -86,7 +86,7 @@ namespace bee_vision {
         uint16_t max_area = 800
     );
 
-    uint8_t classify_crop(const CropView candidate);
+    uint8_t classify_crop(const CropView& candidate);
 
     bool initialize_bee_model();
 
