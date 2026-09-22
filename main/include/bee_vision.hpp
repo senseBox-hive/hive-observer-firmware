@@ -90,6 +90,8 @@ namespace bee_vision {
 
     bool initialize_bee_model();
 
+    bool model_initialized();
+
     float bee_activity_index(std::vector<uint8_t> classification_results);
 
     CropView make_crop(const camera_fb_t* frame, int16_t x,  int16_t y, uint16_t n);

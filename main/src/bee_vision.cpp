@@ -127,7 +127,7 @@ uint8_t classify_crop(const CropView& candidate){
     return static_cast<uint8_t>(class_id);
 }
 
-bool initialize_bee_model() {    
+bool initialize_bee_model() {
     bee_model = new dl::Model(
         (const char *)espdl_bee_model
     );
@@ -147,6 +147,10 @@ bool initialize_bee_model() {
     bee_model->profile(true);
 
     return true;
+}
+
+bool model_initialized() {
+    return (bee_model != NULL);
 }
 
 //bee_activity_index(std::vector<uint8_t> classification_results) {
