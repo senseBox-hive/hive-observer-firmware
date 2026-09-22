@@ -99,8 +99,9 @@ uint8_t classify_crop(const CropView& candidate){
     std::memcpy(input_tensor->get_element_ptr<int8_t>(), model_input, sizeof(model_input));
     //bee_model->run(dl::RUNTIME_MODE_SINGLE_CORE);
     bee_model->run(dl::RUNTIME_MODE_MULTI_CORE); 
-        //this still takes 1.1s. quite a long time.
-        // might be becaues its running in psram
+        //using a model with 48 hidden layers instead of 100,
+        // same configs otherwise, compared to the model in last commit
+        // gets the job done in about 20-30ms and is only 1/3rd the size
     ESP_LOGI("CNN", "Ran inference on crop");
 
     int class_id = 0;

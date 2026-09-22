@@ -44,6 +44,8 @@ extern "C" void app_main(void)
     ESP_LOGI("MEM", "Begin Main loop...");
     while (true) {
         ESP_LOGI("MEM", "Free heap at start of loop: %lu bytes", esp_get_free_heap_size());
+        //TODO: find the culprit. at this point, heap still shrinks with each loop. by about 239600 bytes.
+        // is about 90000 bytes larger than the model of 144588 bytes.
         vTaskDelay(pdMS_TO_TICKS(2000));
         ESP_LOGI("CNN", "initializing bee model...");
         if (!bee_vision::initialize_bee_model()) {
@@ -64,10 +66,10 @@ extern "C" void app_main(void)
         ESP_LOGI("CNN", "test crop classified as: %s", classification_cat_names[cls]);
 
         // print sensors found
-        std::vector<float> v = temp_sensors::read_temperatures(device_nums);
-        for (auto i : v){
-            ESP_LOGI("MEM", "Measured: %.2f", i);
-        }
+        //std::vector<float> v = temp_sensors::read_temperatures(device_nums);
+        //for (auto i : v){
+        //    ESP_LOGI("MEM", "Measured: %.2f", i);
+        //}
 
         vTaskDelay(pdMS_TO_TICKS(5));
     }
