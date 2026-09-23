@@ -74,6 +74,12 @@ namespace bee_vision {
             return parent.size();
         }
     };
+
+    static inline int border_reflect(int p, int len) {
+        if (p < 0)     return -p;
+        if (p >= len)  return 2 * len - p - 2;
+        return p;
+    };
     
     // potentially use a more complex struct if you need to convey other info such as coordinates too
     std::vector<uint8_t> classify_frame(const camera_fb_t* frame);

@@ -202,18 +202,28 @@ std::vector<CropView> candidate_crops(
     uint8_t cropsize,
     uint16_t max_area
 ){
+
     // This is where the operation previously implemented in python is performed
     size_t amount_px = frame->width * frame->height;
+    const uint8_t w = frame->width;
+    const uint8_t h = frame->height;
+    uint16_t MAX_LABELS = 1024;
     uint16_t* labelmask = (uint16_t*) heap_caps_malloc(amount_px * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+    uint8_t* satmask = (uint8_t*) heap_caps_malloc(amount_px * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
     UnionFind unions = UnionFind(38400); //38400 would be absolute worst case. unlikely to happen
     uint16_t current_label_id = 1;
     std::vector<CropView> crops;
-    uint16_t MAX_LABELS = 2048;
-    // for now we just assume 255 possible labels. if more are found, assume something is wrong
+    // experimentally, training data never yielded more than 808 blobs a frame.
+    // assume cap at 1024
 
     if(!labelmask){
         ESP_LOGE("CNN", "Failed to allocate mask memory");
         heap_caps_free(labelmask);
+        return crops;
+    }
+    if(!satmask){
+        ESP_LOGE("CNN", "Failed to allocate saturation mask memory");
+        heap_caps_free(satmask);
         return crops;
     }
     // since both this preprocessing, as well as the model
@@ -222,16 +232,17 @@ std::vector<CropView> candidate_crops(
     // TODO
 
     // original script used blur k size 0, so the gaussian blur step is skipped for now.
-    // if new training data is created that makes use of the blur step, it needs to be added here with the same params.
+    // consider adding gaussian blur again if it increases performance over scanning excessive crops
+    
+    //compute saturation mask
+    bool threshold_reached = false;
     for (int i = 0; i<amount_px; i++) {
         //*unswaps your bytes*
         uint8_t first   = frame->buf[i*2 + 0];
         uint8_t second  = frame->buf[i*2 + 1];
         uint16_t px = (second << 8) | first;
 
-        uint8_t r;
-        uint8_t g;
-        uint8_t b;
+        uint8_t r, g, b;
 
         unpack_565(px, r, g, b);
 
@@ -240,31 +251,65 @@ std::vector<CropView> candidate_crops(
         uint8_t mn = std::min({r, g, b});
         uint8_t sat = mx - mn;
 
-        // do the first pass of the 2 pass CCL algorithm
+        satmask[i] = sat;
+
         if (sat > saturation_threshold) {
-            // TODO: prevent out of bounds
-            bool isMostWest = (i % frame->width == 0);
-            bool isMostNorth = (i < frame->width);
-            labelmask[i] = current_label_id;
-            current_label_id++;
+            threshold_reached = true;
+        } 
+    }
+    if (!threshold_reached) {
+        ESP_LOGI("CNN", "No pixels exceeded saturation threshold");
+        heap_caps_free(labelmask);
+        heap_caps_free(satmask);
+        return crops;
+    }
+    
+    
+    for (int y = 0; y < h; y++) {
+        // rolling row-buffer
+        const uint8_t* rn = satmask + border_reflect(y - 1, h) * w; //row-1
+        const uint8_t* rc = satmask + y * w; //row
+        const uint8_t* rs = satmask + border_reflect(y + 1, h) * w; //row+1
+
+        for (uint8_t x = 0; x < w; x++) {
+            // blur
+            const uint8_t xw = border_reflect(x - 1, w); //col-1
+            const uint8_t xe = border_reflect(x + 1, w); //col+1
+
+            uint16_t acc =     rn[xw] + 2 * rn[x] +     rn[xe]
+                         + 2 * rc[xw] + 4 * rc[x] + 2 * rc[xe]
+                         +     rs[xw] + 2 * rs[x] +     rs[xe];
+            uint8_t blurred = (acc + 8) >> 4;
+
+            const uint16_t i = y * w + x;
             
-            // check west pixel
-            if (!isMostWest && (labelmask[i-1] != 0)){
-                //compare north and west
-                if (!isMostNorth && (labelmask[i-frame->width] != 0)) {
-                    if (labelmask[i-1] != labelmask[i-frame->width]){
-                        unions.unite(labelmask[i-frame->width], labelmask[i-1]);
+            // 1st pass of the 2 pass CCL algorithm
+            if (blurred > saturation_threshold) {
+                bool isMostWest = (x == 0);
+                bool isMostNorth = (y == 0);
+
+                labelmask[i] = current_label_id;
+                current_label_id++;
+                
+                // check west pixel
+                if (!isMostWest && (labelmask[i-1] != 0)){
+                    //compare north and west
+                    if (!isMostNorth && (labelmask[i-frame->width] != 0)) {
+                        if (labelmask[i-1] != labelmask[i-frame->width]){
+                            unions.unite(labelmask[i-frame->width], labelmask[i-1]);
+                        }
                     }
+                    labelmask[i] = labelmask[i-1];
+                    current_label_id--; //no new label created after all
+                // if no west label is found check once more for north label
+                } else if(!isMostNorth && (labelmask[i-frame->width] != 0)) {
+                    labelmask[i] = labelmask[i-frame->width];
+                    current_label_id--; //no new label created after all
                 }
-                labelmask[i] = labelmask[i-1];
-                current_label_id--; //no new label created after all
-            // if no west label is found check once more for north label
-            } else if(!isMostNorth && (labelmask[i-frame->width] != 0)) {
-                labelmask[i] = labelmask[i-frame->width];
-                current_label_id--; //no new label created after all
+            
+            } else {
+                labelmask[i] = 0;
             }
-        } else {
-            labelmask[i] = 0;
         }
 
         if (current_label_id > MAX_LABELS) {
@@ -275,8 +320,9 @@ std::vector<CropView> candidate_crops(
 
     }
 
-    //uint32t is a bit wasteful. if it ends up too large for internal memory, switch to uint16_t and just check for overflow when adding to the sums.
-    uint32_t* area  = (uint32_t*) heap_caps_calloc(MAX_LABELS + 1, sizeof(uint32_t), MALLOC_CAP_INTERNAL);
+    // technically max uint16 65535 can be smaller than qvga area 76800. very unlikely.
+    // safeguard with max area
+    uint16_t* area  = (uint16_t*) heap_caps_calloc(MAX_LABELS + 1, sizeof(uint16_t), MALLOC_CAP_INTERNAL);
     uint32_t* sum_x = (uint32_t*) heap_caps_calloc(MAX_LABELS + 1, sizeof(uint32_t), MALLOC_CAP_INTERNAL);
     uint32_t* sum_y = (uint32_t*) heap_caps_calloc(MAX_LABELS + 1, sizeof(uint32_t), MALLOC_CAP_INTERNAL);
     if (!area || !sum_x || !sum_y) {
@@ -289,13 +335,16 @@ std::vector<CropView> candidate_crops(
      }
 
     // pass 2
-    for(int i = 0; i<amount_px; i++){
+    for(int i = 0; i<MAX_LABELS+1; i++){
         if (labelmask[i] != 0){
             //correct labels for all pixels
             uint16_t root = unions.find(labelmask[i]);
             labelmask[i] = root;
             uint16_t x = i % frame->width;
             uint16_t y = i / frame->width;
+
+            //check max_area
+            if (area[root] >= max_area ) continue;
 
             area[root]  += 1;
             sum_x[root] += x;
@@ -307,6 +356,7 @@ std::vector<CropView> candidate_crops(
     for(uint16_t label = 1; label<unions.size(); label++){
         if (area[label] == 0) continue; // label is non-root
         if (area[label] < min_area) continue; // label is too small
+        if (area[label] >= max_area) continue;
         int cx = sum_x[label] / area[label];
         int cy = sum_y[label] / area[label];
 
