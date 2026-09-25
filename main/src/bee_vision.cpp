@@ -153,10 +153,6 @@ bool model_initialized() {
     return (bee_model != NULL);
 }
 
-//bee_activity_index(std::vector<uint8_t> classification_results) {
-//    //perform maths on the resulting classes to estimate how busy the hive is
-//}
-
 CropView make_crop(const camera_fb_t* frame, int16_t x,  int16_t y, uint16_t n){
     
     //determine stride from color type
