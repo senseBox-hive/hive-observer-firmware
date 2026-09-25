@@ -75,6 +75,71 @@ namespace bee_vision {
         }
     };
 
+    // ring buffer of activity for bee activity rolling average
+    class ActivityBugger {
+    private:
+        std::vector<std::tuple<uint32_t ,std::vector<uint8_t>>> buffer; //tuple: timestamp and inferences
+        int front;
+        int back;
+        int capacity; // in this case, 60000 milliseconds. 1 Minute
+
+    public:
+        ActivityBuffer(int _capacity) {
+            // If the capacity is invalid
+            if (_capacity < 0) {
+                throw invalid_argument("Invalid capacity");
+            }
+            this->capacity = _capacity + 1;
+            this->front = 0;
+            this->back = 0;
+            buffer.resize(capacity);
+        }
+        
+        // Function to add an element to the buffer
+        void push_back(std::vector<uint8_t>) {
+            if (full()) {
+                // drop oldest element if full
+                
+            }
+            std::tuple<uint32_t ,std::vector<uint8_t>> tuple;
+            tuple = {esp_log_timestamp(), std::vector<uint8_t>}
+            buffer[back] = tuple;
+            back = (back + 1) % capacity;
+        }
+
+        int getFront() {
+            if (empty()) {
+                throw out_of_range("ActivityBuffer is empty");
+            }
+            return buffer[front];
+        }
+
+        // get the last 1 minute of the buffer
+
+        // Function to check if the buffer is empty
+        bool empty() const { return front == back; }
+
+        // Function to check if the buffer is full
+        bool full() const {
+            return (back + 1) % capacity == front;
+        }
+
+        // Function to get the size of the buffer
+        int size() const {
+            if (back >= front) {
+                return back - front;
+            }
+            return capacity - (front - back);
+        }
+    }
+
+    class ActivityIndex {
+        
+    public:
+        
+    } 
+
+
     static inline int border_reflect(int p, int len) {
         if (p < 0)     return -p;
         if (p >= len)  return 2 * len - p - 2;
@@ -98,7 +163,7 @@ namespace bee_vision {
 
     bool model_initialized();
 
-    float bee_activity_index(std::vector<uint8_t> classification_results);
+    float frame_bee_activity_index(std::vector<uint8_t> classification_results);
 
     CropView make_crop(const camera_fb_t* frame, int16_t x,  int16_t y, uint16_t n);
 

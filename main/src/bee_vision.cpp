@@ -153,9 +153,26 @@ bool model_initialized() {
     return (bee_model != NULL);
 }
 
-//bee_activity_index(std::vector<uint8_t> classification_results) {
-//    //perform maths on the resulting classes to estimate how busy the hive is
-//}
+float bee_activity_index(std::vector<uint8_t> classification_results) {
+    // get rolling average of class detections and compute index from this
+
+    //count the amount of slow and moving bees
+    //0: bg
+    //1: bee-motion
+    //2: bee-slow
+
+    // no movement -> 0
+    // slow bees means loitering at entrance
+    // slow bees, depending on activity +0-0.5
+
+    // flying bees means flux
+    // depending on activity +0-1
+
+    //activity index = max(1, slow_index + flying_index)
+    // where do we set the cap?
+    // 
+
+}
 
 CropView make_crop(const camera_fb_t* frame, int16_t x,  int16_t y, uint16_t n){
     
