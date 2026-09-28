@@ -27,6 +27,14 @@ extern "C" void app_main(void)
 {
     //example image to test the model
     extern const uint8_t example_crop[] asm("_binary_example_rgb565_start");
+    extern const uint8_t example_frame[] asm("_binary_example_frame_rgb565_start");
+
+    camera_fb_t example_frame_fb = {};
+    example_frame_fb.buf = const_cast<uint8_t*>(example_frame);
+    example_frame_fb.len = 320 * 240 * 2;
+    example_frame_fb.width = 320;
+    example_frame_fb.height = 240;
+    example_frame_fb.format = PIXFORMAT_RGB565;
 
     ESP_LOGI("SD", "Mounting SD card...");
     gpio_set_direction(GPIO_NUM_43, GPIO_MODE_OUTPUT);
@@ -68,6 +76,11 @@ extern "C" void app_main(void)
         };
         uint8_t cls = bee_vision::classify_crop(crop);
         ESP_LOGI("CNN", "test crop classified as: %s", classification_cat_names[cls]);
+
+        std::vector<uint8_t> frame_inferences = bee_vision::classify_frame(&example_frame_fb);
+        for (auto i : frame_inferences){
+            ESP_LOGI("CNN", "testframe crop classified as: %s", classification_cat_names[i]);
+        }
 
         // print sensors found
         std::vector<float> v = temp_sensors::read_temperatures(device_nums);

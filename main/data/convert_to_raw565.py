@@ -15,3 +15,4 @@ rgb565 = (r << 11) | (g << 5) | b                      # packed 16-bit
 # CRITICAL: write in the SAME byte order your device unpacks.
 # Your code does px = (second<<8)|first, i.e. buf[0]=low, buf[1]=high  → little-endian.
 rgb565.astype('<u2').tofile("example_frame.rgb565")          # '<u2' = little-endian uint16
+#rgb565.astype('>u2').tofile("example_frame.rgb565")          # '>u2' = big-endian

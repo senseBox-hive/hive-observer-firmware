@@ -36,6 +36,7 @@ int8_t model_input[32*32*3]; //input buffer for the model, RGB888, 32x32
 std::vector<uint8_t> classify_frame(const camera_fb_t* frame){
     std::vector<uint8_t> results = {};
 
+    ESP_LOGI("CNN", "getting candidate crops from frame");
     std::vector<CropView> candidates = candidate_crops(
         frame, 
         40, 
@@ -43,6 +44,7 @@ std::vector<uint8_t> classify_frame(const camera_fb_t* frame){
         32, 
         800
     );
+    ESP_LOGI("CNN", "found %i crops", candidates.size());
 
     if(candidates.size() == 0) {
         return results;
@@ -59,6 +61,8 @@ std::vector<uint8_t> classify_frame(const camera_fb_t* frame){
 
         results.push_back(classified);
     }
+
+    ESP_LOGI("CNN", "made %i inferences from %i crops", results.size(), candidates.size());
 
     return results;
 }
@@ -89,7 +93,7 @@ uint8_t classify_crop(const CropView& candidate){
         model_input[base + 2] = (int8_t)qb;
       }
     }
-    ESP_LOGI("CNN", "Converted crop to tensor");
+    //ESP_LOGI("CNN", "Converted crop to tensor");
 
     // run inference here
     std::map<std::string, dl::TensorBase *> &model_inputs = bee_model->get_inputs();
@@ -102,7 +106,7 @@ uint8_t classify_crop(const CropView& candidate){
         //using a model with 48 hidden layers instead of 100,
         // same configs otherwise, compared to the model in last commit
         // gets the job done in about 20-30ms and is only 1/3rd the size
-    ESP_LOGI("CNN", "Ran inference on crop");
+    //ESP_LOGI("CNN", "Ran inference on crop");
 
     int class_id = 0;
     float best_score = -std::numeric_limits<float>::infinity();
@@ -200,10 +204,10 @@ std::vector<CropView> candidate_crops(
 ){
 
     // This is where the operation previously implemented in python is performed
-    size_t amount_px = frame->width * frame->height;
-    const uint8_t w = frame->width;
-    const uint8_t h = frame->height;
-    uint16_t MAX_LABELS = 1024;
+    const size_t amount_px = frame->width * frame->height;
+    const size_t w = frame->width;
+    const size_t h = frame->height;
+    constexpr uint16_t MAX_LABELS = 1024;
     uint16_t* labelmask = (uint16_t*) heap_caps_malloc(amount_px * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
     uint8_t* satmask = (uint8_t*) heap_caps_malloc(amount_px * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
     UnionFind unions = UnionFind(38400); //38400 would be absolute worst case. unlikely to happen
@@ -215,6 +219,7 @@ std::vector<CropView> candidate_crops(
     if(!labelmask){
         ESP_LOGE("CNN", "Failed to allocate mask memory");
         heap_caps_free(labelmask);
+        heap_caps_free(satmask);
         return crops;
     }
     if(!satmask){
@@ -231,6 +236,7 @@ std::vector<CropView> candidate_crops(
     // consider adding gaussian blur again if it increases performance over scanning excessive crops
     
     //compute saturation mask
+    ESP_LOGI("CNN", "Computing saturation mask");
     bool threshold_reached = false;
     for (int i = 0; i<amount_px; i++) {
         //*unswaps your bytes*
@@ -261,23 +267,25 @@ std::vector<CropView> candidate_crops(
     }
     
     
-    for (int y = 0; y < h; y++) {
+    for (size_t y = 0; y < h; y++) {
         // rolling row-buffer
-        const uint8_t* rn = satmask + border_reflect(y - 1, h) * w; //row-1
+        const int previous_y = border_reflect(static_cast<int>(y) - 1, static_cast<int>(h));
+        const int next_y = border_reflect(static_cast<int>(y) + 1, static_cast<int>(h));
+        const uint8_t* rn = satmask + previous_y * w; //row-1
         const uint8_t* rc = satmask + y * w; //row
-        const uint8_t* rs = satmask + border_reflect(y + 1, h) * w; //row+1
+        const uint8_t* rs = satmask + next_y * w; //row+1
 
-        for (uint8_t x = 0; x < w; x++) {
+        for (size_t x = 0; x < w; x++) {
             // blur
-            const uint8_t xw = border_reflect(x - 1, w); //col-1
-            const uint8_t xe = border_reflect(x + 1, w); //col+1
+            const int west_x = border_reflect(static_cast<int>(x) - 1, static_cast<int>(w));
+            const int east_x = border_reflect(static_cast<int>(x) + 1, static_cast<int>(w));
 
-            uint16_t acc =     rn[xw] + 2 * rn[x] +     rn[xe]
-                         + 2 * rc[xw] + 4 * rc[x] + 2 * rc[xe]
-                         +     rs[xw] + 2 * rs[x] +     rs[xe];
+            uint16_t acc =     rn[west_x] + 2 * rn[x] +     rn[east_x]
+                         + 2 * rc[west_x] + 4 * rc[x] + 2 * rc[east_x]
+                         +     rs[west_x] + 2 * rs[x] +     rs[east_x];
             uint8_t blurred = (acc + 8) >> 4;
 
-            const uint16_t i = y * w + x;
+            const size_t i = y * w + x;
             
             // 1st pass of the 2 pass CCL algorithm
             if (blurred > saturation_threshold) {
@@ -311,6 +319,7 @@ std::vector<CropView> candidate_crops(
         if (current_label_id > MAX_LABELS) {
             ESP_LOGE("CNN", "Label ID rolled over max labels, frame considered invalid");
             heap_caps_free(labelmask);
+            heap_caps_free(satmask);
             return crops;
         }
 
@@ -331,13 +340,14 @@ std::vector<CropView> candidate_crops(
      }
 
     // pass 2
-    for(int i = 0; i<MAX_LABELS+1; i++){
+    ESP_LOGI("CNN", "2nd pass ccl");
+    for (size_t i = 0; i < amount_px; i++) {
         if (labelmask[i] != 0){
             //correct labels for all pixels
             uint16_t root = unions.find(labelmask[i]);
             labelmask[i] = root;
-            uint16_t x = i % frame->width;
-            uint16_t y = i / frame->width;
+            size_t x = i % w;
+            size_t y = i / w;
 
             //check max_area
             if (area[root] >= max_area ) continue;
@@ -349,7 +359,8 @@ std::vector<CropView> candidate_crops(
     }
 
     // create NxN crops for each root label
-    for(uint16_t label = 1; label<unions.size(); label++){
+    ESP_LOGI("CNN", "NxN crops for each root label");
+    for (uint16_t label = 1; label <= MAX_LABELS; label++) {
         if (area[label] == 0) continue; // label is non-root
         if (area[label] < min_area) continue; // label is too small
         if (area[label] >= max_area) continue;
