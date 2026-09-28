@@ -44,9 +44,9 @@ esp_err_t init_camera(void)
     return err;
 }
 
-camera_fb_t* combine_grayscale_to_rgb(const camera_fb_t *r,
-                                      const camera_fb_t *g,
-                                      const camera_fb_t *b)
+camera_fb_t* combine_grayscale_to_rgb565(const camera_fb_t *r,
+                                         const camera_fb_t *g,
+                                         const camera_fb_t *b)
 {
     if (!r || !g || !b) {
         ESP_LOGE("CAM", "Null input buffer");
@@ -64,8 +64,8 @@ camera_fb_t* combine_grayscale_to_rgb(const camera_fb_t *r,
         return NULL;
     }
 
-    size_t pixels  = r->width * r->height;
-    size_t rgb_len = pixels * 3;
+    size_t pixels = static_cast<size_t>(r->width) * r->height;
+    size_t rgb565_len = pixels * 2;
 
     // --- Allocate output fb ---
     camera_fb_t *out = (camera_fb_t*)heap_caps_malloc(sizeof(camera_fb_t),
@@ -73,32 +73,35 @@ camera_fb_t* combine_grayscale_to_rgb(const camera_fb_t *r,
     if (!out) return NULL;
 
     // Prefer PSRAM for the large pixel buffer
-    out->buf = (uint8_t*)heap_caps_malloc(rgb_len, MALLOC_CAP_SPIRAM);
+    out->buf = (uint8_t*)heap_caps_malloc(rgb565_len, MALLOC_CAP_SPIRAM);
     if (!out->buf) {
-        out->buf = (uint8_t*)heap_caps_malloc(rgb_len, MALLOC_CAP_DEFAULT);
+        out->buf = (uint8_t*)heap_caps_malloc(rgb565_len, MALLOC_CAP_DEFAULT);
     }
     if (!out->buf) {
         free(out);
-        ESP_LOGE("CAM", "Failed to allocate %u bytes", rgb_len);
+        ESP_LOGE("CAM", "Failed to allocate %u bytes", static_cast<unsigned>(rgb565_len));
         return NULL;
     }
 
-    out->len    = rgb_len;
+    out->len    = rgb565_len;
     out->width  = r->width;
     out->height = r->height;
-    out->format = PIXFORMAT_RGB888;
+    out->format = PIXFORMAT_RGB565;
     out->timestamp = r->timestamp;
 
-    // --- Interleave channels ---
+    // Pack each pixel as RGB565, stored low byte first to match CropView::pixel().
     const uint8_t *rp = r->buf;
     const uint8_t *gp = g->buf;
     const uint8_t *bp = b->buf;
     uint8_t *dst = out->buf;
 
     for (size_t i = 0; i < pixels; i++) {
-        *dst++ = rp[i];   // R
-        *dst++ = gp[i];   // G
-        *dst++ = bp[i];   // B
+        const uint16_t px =
+            (static_cast<uint16_t>(rp[i] & 0xF8) << 8) |
+            (static_cast<uint16_t>(gp[i] & 0xFC) << 3) |
+            (static_cast<uint16_t>(bp[i]) >> 3);
+        *dst++ = static_cast<uint8_t>(px & 0xFF);
+        *dst++ = static_cast<uint8_t>(px >> 8);
     }
 
     return out;
@@ -119,7 +122,7 @@ camera_fb_t* capture_rgb_sequence()
     camera_fb_t *blue = esp_camera_fb_get();
 
     // combine into rgb channels of base pic
-    camera_fb_t *combined = combine_grayscale_to_rgb(red, green, blue);
+    camera_fb_t *combined = combine_grayscale_to_rgb565(red, green, blue);
     if (!combined) {
         ESP_LOGE("APP", "Failed to combine RGB channels");
         esp_camera_fb_return(red);

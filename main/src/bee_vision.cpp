@@ -36,7 +36,7 @@ int8_t model_input[32*32*3]; //input buffer for the model, RGB888, 32x32
 std::vector<uint8_t> classify_frame(const camera_fb_t* frame){
     std::vector<uint8_t> results = {};
 
-    ESP_LOGI("CNN", "getting candidate crops from frame");
+    //ESP_LOGI("CNN", "getting candidate crops from frame");
     std::vector<CropView> candidates = candidate_crops(
         frame, 
         40, 
@@ -44,7 +44,6 @@ std::vector<uint8_t> classify_frame(const camera_fb_t* frame){
         32, 
         800
     );
-    ESP_LOGI("CNN", "found %i crops", candidates.size());
 
     if(candidates.size() == 0) {
         return results;
@@ -62,8 +61,6 @@ std::vector<uint8_t> classify_frame(const camera_fb_t* frame){
         results.push_back(classified);
     }
 
-    ESP_LOGI("CNN", "made %i inferences from %i crops", results.size(), candidates.size());
-
     return results;
 }
 
@@ -74,7 +71,7 @@ uint8_t classify_crop(const CropView& candidate){
         return 9;
     }
 
-    ESP_LOGI("CNN", "Classifying crop at (%d, %d) with size %dx%d", candidate.origin_x, candidate.origin_y, candidate.size, candidate.size);
+    //ESP_LOGI("CNN", "Classifying crop at (%d, %d) with size %dx%d", candidate.origin_x, candidate.origin_y, candidate.size, candidate.size);
     //measure time to convert to tensor and run inference
     for (int row = 0; row < 32; row++) {
       for (int col = 0; col < 32; col++) {
@@ -238,7 +235,7 @@ std::vector<CropView> candidate_crops(
     // consider adding gaussian blur again if it increases performance over scanning excessive crops
     
     //compute saturation mask
-    ESP_LOGI("CNN", "Computing saturation mask");
+    //ESP_LOGI("CNN", "Computing saturation mask");
     bool threshold_reached = false;
     for (int i = 0; i<amount_px; i++) {
         //*unswaps your bytes*
@@ -326,6 +323,7 @@ std::vector<CropView> candidate_crops(
         }
 
     }
+    heap_caps_free(satmask);
 
     // technically max uint16 65535 can be smaller than qvga area 76800. very unlikely.
     // safeguard with max area
@@ -342,7 +340,7 @@ std::vector<CropView> candidate_crops(
      }
 
     // pass 2
-    ESP_LOGI("CNN", "2nd pass ccl");
+    //ESP_LOGI("CNN", "2nd pass ccl");
     for (size_t i = 0; i < amount_px; i++) {
         if (labelmask[i] != 0){
             //correct labels for all pixels
@@ -361,7 +359,7 @@ std::vector<CropView> candidate_crops(
     }
 
     // create NxN crops for each root label
-    ESP_LOGI("CNN", "NxN crops for each root label");
+    //ESP_LOGI("CNN", "NxN crops for each root of the %i root-labels", current_label_id);
     for (uint16_t label = 1; label <= MAX_LABELS; label++) {
         if (area[label] == 0) continue; // label is non-root
         if (area[label] < min_area) continue; // label is too small
