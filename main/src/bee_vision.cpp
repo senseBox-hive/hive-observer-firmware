@@ -169,9 +169,11 @@ CropView make_crop(const camera_fb_t* frame, int16_t x,  int16_t y, uint16_t n){
         default:                    bytes_per_px = 0; break;
     }
     stride = frame->width * bytes_per_px;
+    const size_t frame_x = x < 0 ? 0 : std::min<size_t>(x, frame->width);
+    const size_t frame_y = y < 0 ? 0 : std::min<size_t>(y, frame->height);
 
     CropView crop {
-        frame->buf + (y * stride) + (x * bytes_per_px),
+        frame->buf + frame_y * stride + frame_x * bytes_per_px,
         x, //origin_x
         y, //origin_y
         stride,

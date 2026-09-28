@@ -19,7 +19,10 @@ namespace bee_vision {
         inline static const uint16_t black_565 = 0x0000;
         
         inline uint16_t pixel(int16_t col, int16_t row) const {
-            //guard against negative coordinates
+            if (col < 0 || row < 0 || col >= size || row >= size) {
+                return black_565;
+            }
+
             const int16_t fx = origin_x + col;
             const int16_t fy = origin_y + row;
             // out of frame-bounds? also return black pixel
@@ -27,7 +30,11 @@ namespace bee_vision {
                 return black_565;
             }
 
-            const uint8_t* p = origin + fy * stride + fx * bytes_per_px;
+            const int16_t frame_x = origin_x < 0 ? 0 : origin_x;
+            const int16_t frame_y = origin_y < 0 ? 0 : origin_y;
+            const uint8_t* p = origin
+                + (fy - frame_y) * stride
+                + (fx - frame_x) * bytes_per_px;
             return (uint16_t(p[1]) << 8) | p[0];
         }
     };
