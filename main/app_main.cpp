@@ -70,10 +70,10 @@ extern "C" void app_main(void)
         ESP_LOGI("CNN", "test crop classified as: %s", classification_cat_names[cls]);
 
         // print sensors found
-        //std::vector<float> v = temp_sensors::read_temperatures(device_nums);
-        //for (auto i : v){
-        //    ESP_LOGI("MEM", "Measured: %.2f", i);
-        //}
+        std::vector<float> v = temp_sensors::read_temperatures(device_nums);
+        for (auto i : v){
+            ESP_LOGI("TEMP", "Measured: %.2f", i);
+        }
 
         vTaskDelay(pdMS_TO_TICKS(5));
     }

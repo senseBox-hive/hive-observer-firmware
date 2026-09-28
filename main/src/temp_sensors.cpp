@@ -12,6 +12,7 @@
 #include "onewire_types.h"
 
 #include <vector>
+#include <string>
 
 #define EXAMPLE_ONEWIRE_BUS_GPIO GPIO_NUM_2 // IO2 or IO14
 #define EXAMPLE_ONEWIRE_MAX_DS18B20 10
@@ -69,14 +70,14 @@ int init(){
     return ds18b20_device_num;
 }
 
-float read_temperature(int device_id){
+float read_temperature(int device_index){
     float temperature;
     //convert, then get. otherwise you end with constant 85.0 reading
-    ds18b20_trigger_temperature_conversion(ds18b20s[device_id]);
-    if (ds18b20_get_temperature(ds18b20s[device_id], &temperature) == ESP_OK) {
+    ds18b20_trigger_temperature_conversion(ds18b20s[device_index]);
+    if (ds18b20_get_temperature(ds18b20s[device_index], &temperature) == ESP_OK) {
         return temperature;
     } else {
-        ESP_LOGE("MEM", "Failed to read temperature from DS18B20[%d]", device_id);
+        ESP_LOGE("MEM", "Failed to read temperature from DS18B20[%d]", device_index);
     }
     return .0f; //TODO:fix
 }
