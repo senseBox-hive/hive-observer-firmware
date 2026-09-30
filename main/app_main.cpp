@@ -1,21 +1,11 @@
 #include <stddef.h>
-#include <esp_system.h>
-#include <cstdint>
-#include <stdio.h>
-#include <algorithm>
 #include <string.h>
 #include <vector>
-#include "esp_heap_caps.h"
 #include "sensor.h"
 #include "esp_log.h"
-#include "bsp/esp-bsp.h"
-#include "freertos/FreeRTOS.h"
+#include "freertos/FreeRTOS.h"  // IWYU pragma: keep
 #include "freertos/task.h"
-#include "esp_netif.h"
 #include "esp_timer.h"
-#include "ds18b20.h"
-#include "ds18b20_types.h"
-#include "onewire_bus.h"
 
 #include "temp_pins.h"
 #include "temp_sensors.hpp"
