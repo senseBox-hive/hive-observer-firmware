@@ -1,26 +1,71 @@
 #include <stddef.h>
-#include "esp_heap_caps.h"
+#include <esp_system.h>
 #include <cstdint>
-#include "sensor.h"
 #include <stdio.h>
 #include <algorithm>
-#include "esp_log.h"
 #include <string.h>
 #include <vector>
+#include "esp_heap_caps.h"
+#include "sensor.h"
+#include "esp_log.h"
 #include "bsp/esp-bsp.h"
 #include "freertos/FreeRTOS.h"
-#include <esp_system.h>
 #include "freertos/task.h"
-
+#include "esp_netif.h"
+#include "esp_timer.h"
 #include "ds18b20.h"
 #include "ds18b20_types.h"
 #include "onewire_bus.h"
+
 #include "temp_pins.h"
 #include "temp_sensors.hpp"
 #include "sd_card.hpp"
 #include "bee_vision.hpp"
 #include "classification_category_name.hpp"
 #include "cam.hpp"
+#include "wifi.hpp"
+
+static const char POST_URL[] = "http://example:8080/";
+
+std::string create_json(
+    uint32_t timestamp, 
+    std::vector<uint8_t> frame_inferences,
+    std::vector<float> temperatures
+){
+    std::string output = "{\"timestamp\":";
+    //timestamp
+    output.append(std::to_string(timestamp));
+    output.append(",");
+
+    //inferences
+    output.append("\"inferences\":[");
+    for (int i = 0; i<frame_inferences.size(); i++){
+        std::string inference = "";
+        if(i>0){
+            inference.append(",");
+        }
+        inference.append("\"");
+        inference.append(classification_cat_names[frame_inferences[i]]);
+        inference.append("\"");
+        output.append(inference);
+    }
+    output.append("],");
+
+    //temperature
+    output.append("\"temperatures\":[");
+    for (int i = 0; i<temperatures.size(); i++){
+        std::string temp = "";
+        if(i>0){
+            temp.append(",");
+        }
+        temp.append(std::to_string(temperatures[i]));
+        output.append(temp);
+    }
+    output.append("]");
+
+    output.append("}");
+    return output;
+}
 
 extern "C" void app_main(void)
 {
@@ -48,7 +93,6 @@ extern "C" void app_main(void)
         ESP_LOGE("APP", "Camera initialization failed");
         return;
     }
-
     ESP_LOGI("CNN", "initializing bee model...");
     if (!bee_vision::model_initialized()) { //this check is necessary to prevent memory from filling up
         if (!bee_vision::initialize_bee_model()) {
@@ -77,13 +121,17 @@ extern "C" void app_main(void)
 
     int device_nums = temp_sensors::init();
 
-    ESP_LOGI("MEM", "Capturing base frame for stacking...");
+    ESP_LOGI("NET", "Initializing network connection");
+    if (ESP_OK != wifi::connect()) {
+        ESP_LOGE("NET", "Network interface initialization failed. continuing offline");
+    }
 
     ESP_LOGI("MEM", "Begin Main loop...");
     while (true) {
         ESP_LOGI("MEM", "Free heap at start of loop: %lu bytes", esp_get_free_heap_size());
 
         //capture frame
+        uint32_t timestamp = esp_timer_get_time() / 1000;
         camera_fb_t *rgb_sequence = cam::capture_rgb_sequence();
         if (!rgb_sequence) {
             ESP_LOGE("APP", "Failed to capture RGB sequence");
@@ -91,14 +139,26 @@ extern "C" void app_main(void)
         }
         //run inference on frame
         std::vector<uint8_t> frame_inferences = bee_vision::classify_frame(rgb_sequence);
-        for (auto i : frame_inferences){
-            ESP_LOGI("CNN", "found in frame: %s", classification_cat_names[i]);
-        }
 
-        // print sensors found
-        std::vector<float> v = temp_sensors::read_temperatures(device_nums);
-        for (auto i : v){
-            ESP_LOGI("TEMP", "Measured: %.2f", i);
+        // fetch sensor outputs
+        std::vector<float> temperatures = temp_sensors::read_temperatures(device_nums);
+
+        //build json
+        std::string measurement_results = create_json(
+            timestamp,
+            frame_inferences,
+            temperatures
+        );
+
+        //send json/save json
+        wifi::HttpResponse resp;
+        esp_err_t err = wifi::http_post(
+            POST_URL,
+            measurement_results,
+            resp
+        );
+        if (err == ESP_OK) {
+            ESP_LOGI("NET", "Status: %d", resp.status_code);
         }
 
         cam::free_fb(rgb_sequence);

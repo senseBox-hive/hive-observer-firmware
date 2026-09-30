@@ -7,10 +7,12 @@ set(include_dirs    ./
 
 if (IDF_TARGET STREQUAL "esp32s3")
     list(APPEND requires esp32_s3_eye_noglib
-                         esp_lcd)
+                         esp_lcd
+                         esp_wifi)
 elseif (IDF_TARGET STREQUAL "esp32p4")
     list(APPEND requires esp32_p4_function_ev_board_noglib
-                         esp_lcd)
+                         esp_lcd
+                         esp_wifi)
 endif()
 
 
@@ -23,6 +25,6 @@ idf_component_register(
     SRC_DIRS ${src_dirs}
     INCLUDE_DIRS ${include_dirs}
     REQUIRES ${requires}
-    PRIV_REQUIRES fatfs
+    PRIV_REQUIRES fatfs esp_http_client nvs_flash esp_netif esp_event
     EMBED_FILES ${embed_files}
 )
