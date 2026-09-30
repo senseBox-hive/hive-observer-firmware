@@ -19,11 +19,7 @@ THE PLAN
 
 1. motion-saturation detection
     check for colored dots. The parameters for that one are alrady in 
-2. Pass 30x30 candidates to CNN for classification
-3. generate activity index from this.
-    moving average of moving bees, slow bees,
-    slow bees can indicate entrance activity, moving bees indicate in and outgoing bees
-
+2. Pass 32x32 candidates to CNN for classification
 
 this requires PIXFORMAT_RGB565
 */ 
@@ -299,7 +295,7 @@ std::vector<CropView> candidate_crops(
 
         unpack_565(px, r, g, b);
 
-        // compute saturation and apply threshold
+        // compute saturation
         uint8_t mx = std::max({r, g, b});
         uint8_t mn = std::min({r, g, b});
         uint8_t sat = mx - mn;
