@@ -29,6 +29,58 @@ this requires PIXFORMAT_RGB565
 */ 
 namespace bee_vision {
 
+const uint16_t CropView::black_565 = 0x0000;
+
+uint16_t CropView::pixel(int16_t col, int16_t row) const {
+    if (col < 0 || row < 0 || col >= size || row >= size) {
+        return black_565;
+    }
+
+    const int16_t fx = origin_x + col;
+    const int16_t fy = origin_y + row;
+    if (fx < 0 || fy < 0 || fx >= frame_width || fy >= frame_height) {
+        return black_565;
+    }
+
+    const int16_t frame_x = origin_x < 0 ? 0 : origin_x;
+    const int16_t frame_y = origin_y < 0 ? 0 : origin_y;
+    const uint8_t* p = origin
+        + (fy - frame_y) * stride
+        + (fx - frame_x) * bytes_per_px;
+    return (uint16_t(p[1]) << 8) | p[0];
+}
+
+UnionFind::UnionFind(int size) {
+    parent.resize(size);
+    for (int i = 0; i < size; i++) {
+        parent[i] = i;
+    }
+}
+
+int UnionFind::find(int i) {
+    int root = i;
+    while (parent[root] != root) {
+        root = parent[root];
+    }
+    while (parent[i] != root) {
+        int next = parent[i];
+        parent[i] = root;
+        i = next;
+    }
+    return root;
+}
+
+void UnionFind::unite(int i, int j) {
+    int irep = find(i);
+    int jrep = find(j);
+    parent[irep] = jrep;
+}
+
+int UnionFind::size() {
+    return parent.size();
+}
+
+
 extern const uint8_t espdl_bee_model[] asm("_binary_model_beeactivity_espdl_start");
 dl::Model *bee_model = nullptr;
 int8_t model_input[32*32*3]; //input buffer for the model, RGB888, 32x32
